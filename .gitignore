@@ -18,7 +18,7 @@ override.tf.json
 *_override.tf.json
 
 # Sensitive variable files
-terraform.tfvars
+# terraform.tfvars
 *.auto.tfvars
 
 # Ignore editor / OS files
