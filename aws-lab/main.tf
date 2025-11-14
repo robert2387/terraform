@@ -1,9 +1,13 @@
 provider "aws" {
-  region     = "us-east-1"
+  region     = "eu-north-1"
 }
 
 variable "subnet_prefix" {
   description = "cidr block for the subnet"
+}
+
+variable "host_os" {
+  description = "vm os"
 }
 
 # 1. Create vpc
@@ -46,7 +50,7 @@ resource "aws_route_table" "prod-route-table" {
 # resource "aws_subnet" "subnet-1" {
 #   vpc_id            = aws_vpc.prod-vpc.id
 #   cidr_block        = "10.0.1.0/24"
-#   availability_zone = "us-east-1a"
+#   availability_zone = "eu-north-1"
 
 #   tags = {
 #     Name = "prod-subnet"
@@ -56,7 +60,7 @@ resource "aws_route_table" "prod-route-table" {
 resource "aws_subnet" "subnet-1" {
   vpc_id            = aws_vpc.prod-vpc.id
   cidr_block        = var.subnet_prefix[0].cidr_block
-  availability_zone = "us-east-1a"
+  availability_zone = "eu-north-1a"
 
   tags = {
     Name = var.subnet_prefix[0].name
@@ -66,7 +70,7 @@ resource "aws_subnet" "subnet-1" {
 resource "aws_subnet" "subnet-2" {
   vpc_id            = aws_vpc.prod-vpc.id
   cidr_block        = var.subnet_prefix[1].cidr_block
-  availability_zone = "us-east-1a"
+  availability_zone = "eu-north-1a"
 
   tags = {
     Name = var.subnet_prefix[1].name
@@ -131,7 +135,6 @@ resource "aws_network_interface" "web-server-nic" {
 # 8. Assign an elastic IP to the network interface created in step 7
 
 resource "aws_eip" "one" {
-  vpc                       = true
   network_interface         = aws_network_interface.web-server-nic.id
   associate_with_private_ip = "10.0.1.50"
   depends_on                = [aws_internet_gateway.gw]
@@ -144,15 +147,11 @@ output "server_public_ip" {
 # 9. Create Ubuntu server and install/enable apache2
 
 resource "aws_instance" "web-server-instance" {
-  ami               = "ami-085925f297f89fce1"
-  instance_type     = "t2.micro"
-  availability_zone = "us-east-1a"
-  key_name          = "main-key"
-
-  network_interface {
-    device_index         = 0
-    network_interface_id = aws_network_interface.web-server-nic.id
-  }
+  ami               = data.aws_ami.server_ami.id
+  instance_type     = "t3.micro"
+  subnet_id = aws_subnet.subnet-1.id
+  availability_zone = "eu-north-1a"
+  key_name               = aws_key_pair.robert_auth.id
 
   user_data = <<-EOF
                 #!/bin/bash
@@ -164,6 +163,29 @@ resource "aws_instance" "web-server-instance" {
   tags = {
     Name = "web-server"
   }
+
+  provisioner "local-exec" {
+    command = templatefile("${var.host_os}-ssh-config.tpl", {
+      hostname     = self.public_ip,
+      user         = "ubuntu",
+      identityfile = "~/.ssh/robertkey"
+    })
+    interpreter = var.host_os == "windows" ? ["Powershell", "-Command"] : ["bash", "-c"]
+
+  }
+}
+
+# 11. Attach ENI as secondary NIC
+resource "aws_network_interface_attachment" "nic_attach" {
+  instance_id         = aws_instance.web-server-instance.id
+  network_interface_id = aws_network_interface.web-server-nic.id
+  device_index        = 1
+}
+
+resource "aws_key_pair" "robert_auth" {
+  key_name   = "robertkey"
+  public_key = file("~/.ssh/robertkey.pub")
+
 }
 
 output "server_private_ip" {
